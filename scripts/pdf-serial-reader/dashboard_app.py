@@ -447,7 +447,8 @@ def check_login():
     if "credentials" not in st.secrets:
         return True
 
-    credentials = {"usernames": dict(st.secrets["credentials"]["usernames"])}
+    import copy, json
+    credentials = {"usernames": json.loads(json.dumps(dict(st.secrets["credentials"]["usernames"])))}
     authenticator = stauth.Authenticate(
         credentials,
         "tool_inventory",
