@@ -1,0 +1,8 @@
+streamlit>=1.37.0
+google-api-python-client
+google-auth
+google-auth-oauthlib
+streamlit-authenticator
+bcrypt
+pdfplumber
+openpyxl

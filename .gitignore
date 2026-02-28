@@ -1,0 +1,16 @@
+# Secrets and credentials - NEVER commit these
+.streamlit/secrets.toml
+token.json
+token_gmail.json
+client_secret*.json
+credentials.json
+
+# Temp files
+.tmp/
+output/
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
