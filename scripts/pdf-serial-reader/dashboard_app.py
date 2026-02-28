@@ -295,12 +295,7 @@ def render_generic_table(df, left_cols=None):
 
 def render_metric_card(label, value, icon=""):
     """Render a single metric card."""
-    return f"""
-    <div class="metric-card">
-        <div class="metric-value">{value}</div>
-        <div class="metric-label">{label}</div>
-    </div>
-    """
+    return f'<div class="metric-card"><div class="metric-value">{value}</div><div class="metric-label">{label}</div></div>'
 
 
 # ── Page config ────────────────────────────────────────────────────
@@ -483,15 +478,40 @@ st.markdown("""
         font-weight: 500 !important;
     }
 
-    /* ── Streamlit data editor overrides ── */
-    .stDataFrame, [data-testid="stDataFrame"] {
+    /* ── Streamlit data editor / dataframe overrides ── */
+    .stDataFrame, [data-testid="stDataFrame"],
+    .stDataEditor, [data-testid="stDataEditor"] {
         border-radius: 16px;
         overflow: hidden;
         border: 1px solid rgba(255,255,255,0.08) !important;
     }
 
-    [data-testid="stDataFrame"] > div {
+    [data-testid="stDataFrame"] > div,
+    [data-testid="stDataEditor"] > div {
         background: rgba(255,255,255,0.03);
+    }
+
+    /* Glide data grid (underlying component) dark overrides */
+    [data-testid="stDataFrame"] [data-testid="glideDataEditor"],
+    [data-testid="stDataEditor"] [data-testid="glideDataEditor"] {
+        --gdg-bg-cell: #333f33 !important;
+        --gdg-bg-header: #2a352a !important;
+        --gdg-bg-header-has-focus: #2a352a !important;
+        --gdg-text-dark: #f5f0e8 !important;
+        --gdg-text-header: #8a8070 !important;
+        --gdg-border-color: rgba(255,255,255,0.08) !important;
+        --gdg-bg-cell-medium: #374237 !important;
+        --gdg-accent-color: #7dbe6a !important;
+        --gdg-accent-light: rgba(125,190,106,0.1) !important;
+        --gdg-bg-bubble: #3d4a3d !important;
+        --gdg-text-medium: #c8c0b4 !important;
+        --gdg-text-light: #8a8070 !important;
+    }
+
+    /* Header row background */
+    [data-testid="stDataFrame"] canvas,
+    [data-testid="stDataEditor"] canvas {
+        border-radius: 12px;
     }
 
     /* ── Button ── */
@@ -623,14 +643,8 @@ with tab_dash:
         total_loadout = int(dashboard_df["Load Out"].sum())
         total_redress = int(dashboard_df["Redress"].sum())
 
-        st.markdown(f"""
-        <div class="metrics-row">
-            {render_metric_card("Tools", total_tools)}
-            {render_metric_card("Ready", total_ready)}
-            {render_metric_card("Load Out", total_loadout)}
-            {render_metric_card("Redress", total_redress)}
-        </div>
-        """, unsafe_allow_html=True)
+        cards = render_metric_card("Tools", total_tools) + render_metric_card("Ready", total_ready) + render_metric_card("Load Out", total_loadout) + render_metric_card("Redress", total_redress)
+        st.markdown(f'<div class="metrics-row">{cards}</div>', unsafe_allow_html=True)
 
         # Dashboard table
         st.markdown(render_dashboard_table(dashboard_df), unsafe_allow_html=True)
@@ -650,13 +664,9 @@ with tab_modem:
     upcoming_count = len(modem_df[modem_df["Status"].isin(["Planned", "Confirmed"])]) if not modem_df.empty and "Status" in modem_df.columns else 0
 
     # Metric cards
-    st.markdown(f"""
-    <div class="metrics-row">
-        {render_metric_card("Active Jobs", len(active_df))}
-        {render_metric_card("Upcoming", upcoming_count)}
-        {render_metric_card("Total Items Out", int(active_df["Items"].sum()) if not active_df.empty else 0)}
-    </div>
-    """, unsafe_allow_html=True)
+    items_out = int(active_df["Items"].sum()) if not active_df.empty else 0
+    modem_cards = render_metric_card("Active Jobs", len(active_df)) + render_metric_card("Upcoming", upcoming_count) + render_metric_card("Total Items Out", items_out)
+    st.markdown(f'<div class="metrics-row">{modem_cards}</div>', unsafe_allow_html=True)
 
     # Active jobs
     st.markdown('<h3 style="color:#f5f0e8; font-size:20px; margin-top:8px;">Active Jobs</h3>', unsafe_allow_html=True)
