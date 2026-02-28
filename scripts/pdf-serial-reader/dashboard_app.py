@@ -261,6 +261,38 @@ def render_dashboard_table(df):
     return html
 
 
+def render_generic_table(df, left_cols=None):
+    """Render any DataFrame as a Seed-styled HTML table."""
+    if left_cols is None:
+        left_cols = {df.columns[0]} if len(df.columns) > 0 else set()
+    html = '<div class="seed-table-wrap"><table class="seed-table">'
+    html += "<thead><tr>"
+    for col in df.columns:
+        align = "left" if col in left_cols else "center"
+        html += f'<th style="text-align:{align}">{col}</th>'
+    html += "</tr></thead><tbody>"
+    for _, row in df.iterrows():
+        html += "<tr>"
+        for col in df.columns:
+            val = row[col]
+            align = "left" if col in left_cols else "center"
+            cell_class = ""
+            if col == "Status":
+                s = str(val).lower()
+                if s == "confirmed":
+                    cell_class = "cell-ok"
+                elif s == "planned":
+                    cell_class = "cell-active"
+                elif s == "ready":
+                    cell_class = "cell-warn"
+                elif s == "cancelled":
+                    cell_class = "cell-danger"
+            html += f'<td class="{cell_class}" style="text-align:{align}">{val}</td>'
+        html += "</tr>"
+    html += "</tbody></table></div>"
+    return html
+
+
 def render_metric_card(label, value, icon=""):
     """Render a single metric card."""
     return f"""
@@ -613,25 +645,29 @@ with tab_dash:
 
 # ── Tab 2: Modem (Job Overview) ──
 with tab_modem:
-    st.markdown('<p class="header-subtitle">Active jobs and upcoming orders from coordinators.</p>', unsafe_allow_html=True)
+    active_df = build_active_jobs_df(out_rows)
+    modem_df = build_modem_df(modem_rows)
+    upcoming_count = len(modem_df[modem_df["Status"].isin(["Planned", "Confirmed"])]) if not modem_df.empty and "Status" in modem_df.columns else 0
+
+    # Metric cards
+    st.markdown(f"""
+    <div class="metrics-row">
+        {render_metric_card("Active Jobs", len(active_df))}
+        {render_metric_card("Upcoming", upcoming_count)}
+        {render_metric_card("Total Items Out", int(active_df["Items"].sum()) if not active_df.empty else 0)}
+    </div>
+    """, unsafe_allow_html=True)
 
     # Active jobs
-    st.markdown('<h3 style="color:#f5f0e8; font-size:20px; margin-top:16px;">Active Jobs</h3>', unsafe_allow_html=True)
-    active_df = build_active_jobs_df(out_rows)
+    st.markdown('<h3 style="color:#f5f0e8; font-size:20px; margin-top:8px;">Active Jobs</h3>', unsafe_allow_html=True)
     if active_df.empty:
         st.info("No active load outs.")
     else:
-        st.dataframe(active_df, use_container_width=True, hide_index=True, column_config={
-            "Customer": st.column_config.TextColumn("Customer", width="medium"),
-            "Well Name": st.column_config.TextColumn("Well Name", width="medium"),
-            "Date": st.column_config.TextColumn("Date", width="small"),
-            "Tools": st.column_config.NumberColumn("Tool Types", width="small"),
-            "Items": st.column_config.NumberColumn("Total Items", width="small"),
-        })
+        st.markdown(render_generic_table(active_df, left_cols={"Customer", "Well Name"}), unsafe_allow_html=True)
 
     # Upcoming jobs
-    st.markdown('<h3 style="color:#f5f0e8; font-size:20px; margin-top:32px;">Upcoming Jobs</h3>', unsafe_allow_html=True)
-    modem_df = build_modem_df(modem_rows)
+    st.markdown('<h3 style="color:#f5f0e8; font-size:20px; margin-top:40px;">Upcoming Jobs</h3>', unsafe_allow_html=True)
+    st.markdown('<p class="header-subtitle">Add or edit upcoming jobs ordered by coordinators.</p>', unsafe_allow_html=True)
 
     edited_modem = st.data_editor(
         modem_df,
