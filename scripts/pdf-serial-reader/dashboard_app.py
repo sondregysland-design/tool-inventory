@@ -447,9 +447,9 @@ def check_login():
     if "credentials" not in st.secrets:
         return True
 
-    config = dict(st.secrets["credentials"])
+    credentials = {"usernames": dict(st.secrets["credentials"]["usernames"])}
     authenticator = stauth.Authenticate(
-        config,
+        credentials,
         "tool_inventory",
         st.secrets.get("cookie_key", "some_secret_key"),
         cookie_expiry_days=30,
