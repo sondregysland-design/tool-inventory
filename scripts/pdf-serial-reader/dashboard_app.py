@@ -61,7 +61,7 @@ def get_sheets_service():
 
 @st.cache_data(ttl=60)
 def load_data():
-    """Load Out and Inventory data from Google Sheet."""
+    """Load Out, Inventory, and Modem data from Google Sheet."""
     service = get_sheets_service()
     sheets = service.spreadsheets()
 
@@ -71,7 +71,13 @@ def load_data():
     inv_result = sheets.values().get(spreadsheetId=SHEET_ID, range="Inventory!A:C").execute()
     inv_rows = inv_result.get("values", [])
 
-    return out_rows, inv_rows
+    try:
+        modem_result = sheets.values().get(spreadsheetId=SHEET_ID, range="Modem!A:F").execute()
+        modem_rows = modem_result.get("values", [])
+    except Exception:
+        modem_rows = []
+
+    return out_rows, inv_rows, modem_rows
 
 
 def build_dashboard_df(out_rows, inv_rows):
@@ -114,6 +120,87 @@ def build_loadout_df(out_rows):
         padded = row + [""] * (len(headers) - len(row))
         data.append(padded[:len(headers)])
     return pd.DataFrame(data, columns=headers)
+
+
+def build_active_jobs_df(out_rows):
+    """Build active jobs overview grouped by Customer + Well Name."""
+    if len(out_rows) <= 1:
+        return pd.DataFrame()
+    jobs = {}
+    for row in out_rows[1:]:
+        if len(row) < 6:
+            continue
+        customer = row[1] if len(row) > 1 else ""
+        well = row[2] if len(row) > 2 else ""
+        date = row[3] if len(row) > 3 else ""
+        desc = row[5] if len(row) > 5 else ""
+        key = (customer, well)
+        if key not in jobs:
+            jobs[key] = {"Customer": customer, "Well Name": well, "Load Out Date": date, "Tools": [], "Count": 0}
+        jobs[key]["Tools"].append(desc)
+        jobs[key]["Count"] += 1
+    records = []
+    for job in jobs.values():
+        unique_tools = sorted(set(job["Tools"]))
+        records.append({
+            "Customer": job["Customer"],
+            "Well Name": job["Well Name"],
+            "Date": job["Load Out Date"],
+            "Tools": len(unique_tools),
+            "Items": job["Count"],
+        })
+    return pd.DataFrame(records)
+
+
+def build_modem_df(modem_rows):
+    """Build upcoming jobs DataFrame from Modem sheet."""
+    if len(modem_rows) <= 1:
+        return pd.DataFrame(columns=["Customer", "Well Name", "Date", "Coordinator", "Tools Needed", "Status"])
+    headers = modem_rows[0]
+    data = []
+    for row in modem_rows[1:]:
+        padded = row + [""] * (len(headers) - len(row))
+        data.append(padded[:len(headers)])
+    return pd.DataFrame(data, columns=headers)
+
+
+def save_modem(modem_data):
+    """Save modem (upcoming jobs) back to Google Sheet."""
+    service = get_sheets_service()
+    rows = [["Customer", "Well Name", "Date", "Coordinator", "Tools Needed", "Status"]]
+    for _, row in modem_data.iterrows():
+        rows.append([str(row[c]) for c in modem_data.columns])
+
+    service.spreadsheets().values().clear(
+        spreadsheetId=SHEET_ID, range="Modem!A:F"
+    ).execute()
+    service.spreadsheets().values().update(
+        spreadsheetId=SHEET_ID,
+        range="Modem!A1",
+        valueInputOption="RAW",
+        body={"values": rows},
+    ).execute()
+
+
+def ensure_modem_sheet():
+    """Create the Modem sheet if it doesn't exist."""
+    service = get_sheets_service()
+    try:
+        meta = service.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
+        sheet_names = [s["properties"]["title"] for s in meta["sheets"]]
+        if "Modem" not in sheet_names:
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=SHEET_ID,
+                body={"requests": [{"addSheet": {"properties": {"title": "Modem"}}}]},
+            ).execute()
+            service.spreadsheets().values().update(
+                spreadsheetId=SHEET_ID,
+                range="Modem!A1",
+                valueInputOption="RAW",
+                body={"values": [["Customer", "Well Name", "Date", "Coordinator", "Tools Needed", "Status"]]},
+            ).execute()
+    except Exception:
+        pass
 
 
 def save_inventory(inv_data):
@@ -483,12 +570,15 @@ check_login()
 st.markdown('<h1 style="font-size:32px; margin-bottom:0;">Tool Inventory</h1>', unsafe_allow_html=True)
 st.markdown('<p class="header-subtitle">Equipment tracking and load out management</p>', unsafe_allow_html=True)
 
+# Ensure Modem sheet exists
+ensure_modem_sheet()
+
 # Load data
-out_rows, inv_rows = load_data()
+out_rows, inv_rows, modem_rows = load_data()
 dashboard_df = build_dashboard_df(out_rows, inv_rows)
 
 # Tabs
-tab_dash, tab_inventory, tab_raw = st.tabs(["Dashboard", "Inventory", "Load Out Data"])
+tab_dash, tab_modem, tab_inventory, tab_raw = st.tabs(["Dashboard", "Modem", "Inventory", "Load Out Data"])
 
 # ── Tab 1: Dashboard ──
 with tab_dash:
@@ -521,7 +611,54 @@ with tab_dash:
             st.cache_data.clear()
             st.rerun()
 
-# ── Tab 2: Inventory Editor ──
+# ── Tab 2: Modem (Job Overview) ──
+with tab_modem:
+    st.markdown('<p class="header-subtitle">Active jobs and upcoming orders from coordinators.</p>', unsafe_allow_html=True)
+
+    # Active jobs
+    st.markdown('<h3 style="color:#f5f0e8; font-size:20px; margin-top:16px;">Active Jobs</h3>', unsafe_allow_html=True)
+    active_df = build_active_jobs_df(out_rows)
+    if active_df.empty:
+        st.info("No active load outs.")
+    else:
+        st.dataframe(active_df, use_container_width=True, hide_index=True, column_config={
+            "Customer": st.column_config.TextColumn("Customer", width="medium"),
+            "Well Name": st.column_config.TextColumn("Well Name", width="medium"),
+            "Date": st.column_config.TextColumn("Date", width="small"),
+            "Tools": st.column_config.NumberColumn("Tool Types", width="small"),
+            "Items": st.column_config.NumberColumn("Total Items", width="small"),
+        })
+
+    # Upcoming jobs
+    st.markdown('<h3 style="color:#f5f0e8; font-size:20px; margin-top:32px;">Upcoming Jobs</h3>', unsafe_allow_html=True)
+    modem_df = build_modem_df(modem_rows)
+
+    edited_modem = st.data_editor(
+        modem_df,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="dynamic",
+        column_config={
+            "Customer": st.column_config.TextColumn("Customer", width="medium"),
+            "Well Name": st.column_config.TextColumn("Well Name", width="medium"),
+            "Date": st.column_config.TextColumn("Date", width="small"),
+            "Coordinator": st.column_config.TextColumn("Coordinator", width="small"),
+            "Tools Needed": st.column_config.TextColumn("Tools Needed", width="large"),
+            "Status": st.column_config.SelectboxColumn("Status", options=["Planned", "Confirmed", "Ready", "Cancelled"], width="small"),
+        },
+        height=min(500, 40 + 35 * max(len(modem_df), 3)),
+    )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_l, col_m, col_r = st.columns([1, 1, 1])
+    with col_m:
+        if st.button("Save Upcoming Jobs", type="primary", use_container_width=True):
+            save_modem(edited_modem)
+            st.cache_data.clear()
+            st.success("Upcoming jobs saved.")
+            st.rerun()
+
+# ── Tab 3: Inventory Editor ──
 with tab_inventory:
     st.markdown('<p class="header-subtitle">Edit Total Stock and Redress, then save changes back to Google Sheet.</p>', unsafe_allow_html=True)
 
