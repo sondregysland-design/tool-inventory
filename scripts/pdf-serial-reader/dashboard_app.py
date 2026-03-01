@@ -493,10 +493,13 @@ st.markdown("""
 
     /* Glide data grid (underlying component) dark overrides */
     [data-testid="stDataFrame"] [data-testid="glideDataEditor"],
-    [data-testid="stDataEditor"] [data-testid="glideDataEditor"] {
+    [data-testid="stDataEditor"] [data-testid="glideDataEditor"],
+    [data-testid="stDataFrame"] [data-testid="glideDataEditor"] *,
+    [data-testid="stDataEditor"] [data-testid="glideDataEditor"] * {
         --gdg-bg-cell: #333f33 !important;
         --gdg-bg-header: #2a352a !important;
         --gdg-bg-header-has-focus: #2a352a !important;
+        --gdg-bg-header-hovered: #313d31 !important;
         --gdg-text-dark: #f5f0e8 !important;
         --gdg-text-header: #8a8070 !important;
         --gdg-border-color: rgba(255,255,255,0.08) !important;
@@ -506,6 +509,14 @@ st.markdown("""
         --gdg-bg-bubble: #3d4a3d !important;
         --gdg-text-medium: #c8c0b4 !important;
         --gdg-text-light: #8a8070 !important;
+        --gdg-bg-icon-header: #2a352a !important;
+        --gdg-bg-search-result: #374237 !important;
+    }
+
+    /* Force green on all data editor wrapper elements */
+    [data-testid="stDataFrame"] > div > div,
+    [data-testid="stDataEditor"] > div > div {
+        background-color: #2a352a !important;
     }
 
     /* Header row background */
@@ -572,6 +583,42 @@ st.markdown("""
         font-weight: 400;
         margin-top: -8px;
         margin-bottom: 32px;
+    }
+
+    /* ── Editable table rows (input-based) ── */
+    .edit-table-header p {
+        color: #8a8070 !important;
+        font-size: 11px !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.06em !important;
+        margin-bottom: 2px !important;
+        font-weight: 500 !important;
+    }
+    .edit-table-row .stTextInput > div > div > input,
+    .edit-table-row .stSelectbox > div > div > div {
+        background: #333f33 !important;
+        border: 1px solid rgba(255,255,255,0.06) !important;
+        color: #f5f0e8 !important;
+        border-radius: 6px !important;
+        font-size: 13px !important;
+    }
+    .edit-table-row .stTextInput > div > div > input:focus {
+        border-color: rgba(125,190,106,0.5) !important;
+        box-shadow: 0 0 0 1px rgba(125,190,106,0.2) !important;
+    }
+    .edit-table-row .stNumberInput > div > div > input {
+        background: #333f33 !important;
+        border: 1px solid rgba(255,255,255,0.06) !important;
+        color: #f5f0e8 !important;
+        border-radius: 6px !important;
+        font-size: 13px !important;
+    }
+    .edit-table-row .stNumberInput > div > div > input:focus {
+        border-color: rgba(125,190,106,0.5) !important;
+        box-shadow: 0 0 0 1px rgba(125,190,106,0.2) !important;
+    }
+    .edit-table-row .stCheckbox label span {
+        color: #8a8070 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -654,7 +701,17 @@ with tab_dash:
     col_left, col_mid, col_right = st.columns([1, 1, 1])
     with col_mid:
         if st.button("Refresh Data", use_container_width=True):
+            old_count = len(out_rows) - 1 if out_rows else 0
             st.cache_data.clear()
+            new_out, new_inv, new_modem = load_data()
+            new_count = len(new_out) - 1 if new_out else 0
+            diff = new_count - old_count
+            if diff > 0:
+                st.success(f"Found {diff} new row(s)! ({new_count} total)")
+            else:
+                st.info(f"No new rows. ({new_count} total)")
+            import time
+            time.sleep(1.5)
             st.rerun()
 
 # ── Tab 2: Modem (Job Overview) ──
@@ -679,26 +736,64 @@ with tab_modem:
     st.markdown('<h3 style="color:#f5f0e8; font-size:20px; margin-top:40px;">Upcoming Jobs</h3>', unsafe_allow_html=True)
     st.markdown('<p class="header-subtitle">Add or edit upcoming jobs ordered by coordinators.</p>', unsafe_allow_html=True)
 
-    edited_modem = st.data_editor(
-        modem_df,
-        use_container_width=True,
-        hide_index=True,
-        num_rows="dynamic",
-        column_config={
-            "Customer": st.column_config.TextColumn("Customer", width="medium"),
-            "Well Name": st.column_config.TextColumn("Well Name", width="medium"),
-            "Date": st.column_config.TextColumn("Date", width="small"),
-            "Coordinator": st.column_config.TextColumn("Coordinator", width="small"),
-            "Tools Needed": st.column_config.TextColumn("Tools Needed", width="large"),
-            "Status": st.column_config.SelectboxColumn("Status", options=["Planned", "Confirmed", "Ready", "Cancelled"], width="small"),
-        },
-        height=min(500, 40 + 35 * max(len(modem_df), 3)),
-    )
+    status_options = ["Planned", "Confirmed", "Ready", "Cancelled"]
+
+    # Track row count in session state
+    if "modem_row_count" not in st.session_state:
+        st.session_state.modem_row_count = max(len(modem_df), 1)
+    n_rows = st.session_state.modem_row_count
+
+    # Column header
+    col_widths = [2, 2, 1, 1, 3, 1.5]
+    st.markdown('<div class="edit-table-header">', unsafe_allow_html=True)
+    hdr_cols = st.columns(col_widths)
+    for col, h in zip(hdr_cols, ["Customer", "Well Name", "Date", "Coordinator", "Tools Needed", "Status"]):
+        col.markdown(h)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Editable rows
+    edited_rows = []
+    for i in range(n_rows):
+        if i < len(modem_df):
+            row = modem_df.iloc[i]
+            cust = str(row.get("Customer", "") or "")
+            well = str(row.get("Well Name", "") or "")
+            date_v = str(row.get("Date", "") or "")
+            coord = str(row.get("Coordinator", "") or "")
+            tools = str(row.get("Tools Needed", "") or "")
+            status_v = str(row.get("Status", "Planned") or "Planned")
+        else:
+            cust = well = date_v = coord = tools = ""
+            status_v = "Planned"
+
+        st.markdown('<div class="edit-table-row">', unsafe_allow_html=True)
+        cols = st.columns(col_widths)
+        e_cust = cols[0].text_input("Customer", value=cust, key=f"modem_cust_{i}", label_visibility="collapsed")
+        e_well = cols[1].text_input("Well Name", value=well, key=f"modem_well_{i}", label_visibility="collapsed")
+        e_date = cols[2].text_input("Date", value=date_v, key=f"modem_date_{i}", label_visibility="collapsed")
+        e_coord = cols[3].text_input("Coordinator", value=coord, key=f"modem_coord_{i}", label_visibility="collapsed")
+        e_tools = cols[4].text_input("Tools Needed", value=tools, key=f"modem_tools_{i}", label_visibility="collapsed")
+        status_idx = status_options.index(status_v) if status_v in status_options else 0
+        e_status = cols[5].selectbox("Status", status_options, index=status_idx, key=f"modem_status_{i}", label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        edited_rows.append({
+            "Customer": e_cust, "Well Name": e_well, "Date": e_date,
+            "Coordinator": e_coord, "Tools Needed": e_tools, "Status": e_status,
+        })
+
+    edited_modem = pd.DataFrame(edited_rows)
 
     st.markdown("<br>", unsafe_allow_html=True)
-    col_l, col_m, col_r = st.columns([1, 1, 1])
-    with col_m:
+    btn_cols = st.columns([1, 1, 1, 1])
+    with btn_cols[1]:
+        if st.button("+ Add Row", use_container_width=True):
+            st.session_state.modem_row_count = n_rows + 1
+            st.rerun()
+    with btn_cols[2]:
         if st.button("Save Upcoming Jobs", type="primary", use_container_width=True):
+            # Filter out completely empty rows
+            edited_modem = edited_modem[edited_modem.apply(lambda r: any(str(v).strip() for v in r if v != "Planned"), axis=1)]
             save_modem(edited_modem)
             st.cache_data.clear()
             st.success("Upcoming jobs saved.")
