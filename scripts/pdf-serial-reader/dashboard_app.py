@@ -24,6 +24,44 @@ from googleapiclient.discovery import build
 SHEET_ID = "1wK92FpXq-07LdYYPCwZi7-C2vruLPs59JM14w4nAggs"
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+# ── Gmail polling helper ──────────────────────────────────────────
+
+
+def check_gmail_for_pdfs():
+    """Check Gmail for new PDF load outs, extract serials, upload to sheet.
+    Only works locally where token_gmail.json exists. Returns status message."""
+    token_path = PROJECT_DIR / "token_gmail.json"
+    if not token_path.exists():
+        return None  # No Gmail token (running on cloud)
+
+    try:
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT_DIR / "gmail_poll.py")],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(PROJECT_DIR),
+        )
+        output = result.stdout + result.stderr
+
+        # Parse results from output
+        if "No new PDF emails found" in output:
+            return "No new emails in Gmail."
+        elif "serial(s)" in output:
+            for line in output.splitlines():
+                if "serial(s)" in line:
+                    return line.strip().split("INFO ")[-1] if "INFO " in line else line.strip()
+            return "Gmail check complete."
+        elif "Error" in output or result.returncode != 0:
+            return f"Gmail check failed: {output[-200:]}"
+        else:
+            return "Gmail check complete."
+    except subprocess.TimeoutExpired:
+        return "Gmail check timed out."
+    except Exception as e:
+        return f"Gmail check error: {e}"
 
 
 # ── Google Sheets helpers ──────────────────────────────────────────
@@ -702,16 +740,26 @@ with tab_dash:
     with col_mid:
         if st.button("Refresh Data", use_container_width=True):
             old_count = len(out_rows) - 1 if out_rows else 0
-            st.cache_data.clear()
-            new_out, new_inv, new_modem = load_data()
+
+            # Step 1: Check Gmail for new PDFs
+            with st.spinner("Checking Gmail for new load outs..."):
+                gmail_result = check_gmail_for_pdfs()
+            if gmail_result:
+                st.info(gmail_result)
+
+            # Step 2: Re-fetch data from Google Sheet
+            with st.spinner("Refreshing data from Google Sheet..."):
+                st.cache_data.clear()
+                new_out, new_inv, new_modem = load_data()
             new_count = len(new_out) - 1 if new_out else 0
             diff = new_count - old_count
             if diff > 0:
                 st.success(f"Found {diff} new row(s)! ({new_count} total)")
             else:
-                st.info(f"No new rows. ({new_count} total)")
+                st.info(f"Data up to date. ({new_count} rows)")
+
             import time
-            time.sleep(1.5)
+            time.sleep(2)
             st.rerun()
 
 # ── Tab 2: Modem (Job Overview) ──
